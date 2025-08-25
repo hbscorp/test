@@ -13,6 +13,15 @@ processors:
   memory_limiter:
     check_interval: 5s
     limit_mib: 512
+  resource:
+   resource:
+    attributes:
+      - key: deployment.environment
+        action: upsert
+        value: local
+      - key: service.namespace
+        action: upsert
+        value: document-management
 
 exporters:
   debug:

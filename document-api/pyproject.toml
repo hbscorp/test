@@ -16,10 +16,15 @@ python-magic = "*"
 opentelemetry-api = "^1.36.0"
 opentelemetry-sdk = "^1.36.0"
 opentelemetry-exporter-otlp = "^1.36.0"
+opentelemetry-instrumentation-fastapi = "^0.42b0"
+opentelemetry-instrumentation-requests = "^0.42b0"
+opentelemetry-exporter-otlp-proto-grpc = "^1.21.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
 pytest-asyncio = "*"
+
+
 
 [build-system]
 requires = ["poetry-core"]

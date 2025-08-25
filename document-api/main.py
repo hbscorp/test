@@ -2,17 +2,22 @@ import asyncio
 import logging
 from datetime import datetime
 from pathlib import Path
-
+import time
 import httpx
 import magic
 from config import get_settings
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile, Request
 from fastapi.responses import JSONResponse
-
+from opentelemetry import metrics, trace
 from telemetry import init_observability
 
 
 app = FastAPI(title="Document API", version="1.0.0")
+meter = metrics.get_meter(__name__)
+request_counter = meter.create_counter("http_server_requests_total", unit="1")
+latency_hist = meter.create_histogram("http_server_request_duration_seconds", unit="s")
+upload_counter = meter.create_counter("documents_uploaded_total", unit="1")
+tracer = trace.get_tracer(__name__)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -20,19 +25,50 @@ logger = logging.getLogger(__name__)
 UPLOADS_DIR = Path("/app/uploads")
 UPLOADS_DIR.mkdir(exist_ok=True)
 
+@app.middleware("http")
+async def record_metrics(request: Request, call_next):
+    start = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        status = 500
+        raise
+    else:
+        status = response.status_code
+    finally:
+        elapsed = time.perf_counter() - start
+        attrs = {
+            "route": request.url.path,
+            "method": request.method,
+            "status_code": status,
+            "client_id": request.path_params.get("client_id", "unknown"),
+        }
+        request_counter.add(1, attrs)
+        latency_hist.record(elapsed, attrs)
+    return response
 
 @app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy", "service": "document-api"}
+async def health_check(settings=Depends(get_settings)):
+    deps = {}
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{settings.data_store_url}/health", timeout=5)
+            deps["data_store"] = resp.status_code == 200
+    except Exception:
+        deps["data_store"] = False
+    status = "healthy" if all(deps.values()) else "unhealthy"
+    return {"status": status, "service": "document-api", "dependencies": deps}
 
 
 async def summarise_document_using_llm(file_path):
-    """Summarise the document using a large language model."""
+    with tracer.start_as_current_span("summarise_document", attributes={"file_path": str(file_path)}):
+        await asyncio.sleep(10)
+        return "This is a summary of the document."
 
-    # Call to real LLM API would go here - lets simulate with a sleep to fake the expensive LLM call
-    await asyncio.sleep(10)
-    return "This is a summary of the document."
+# in upload_document(...)
+with tracer.start_as_current_span("store_metadata", attributes={"client_id": client_id, "file_name": file.filename}):
+    response = await client.post(...)
+upload_counter.add(1, {"client_id": client_id})
 
 
 @app.put("/clients/{client_id}/upload-document")
